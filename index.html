@@ -470,6 +470,42 @@ select{cursor:pointer;}
   .legend{font-size:.63rem;padding:.9rem 1rem;}
 }
 
+/* LEAGUE ID SECTION */
+.league-id-row { display:flex; gap:.75rem; align-items:flex-end; margin-bottom:1.5rem; }
+.league-id-field { flex:1; display:flex; flex-direction:column; gap:.4rem; }
+#fetch-league-btn {
+  padding:.6rem 1rem; border-radius:8px;
+  background:rgba(16,232,160,.1); border:1px solid var(--green);
+  color:var(--green); font-family:'JetBrains Mono',monospace;
+  font-size:.7rem; cursor:pointer; white-space:nowrap;
+  transition:all .2s; letter-spacing:.06em;
+}
+#fetch-league-btn:hover { background:rgba(16,232,160,.2); }
+#fetch-league-btn:disabled { opacity:.4; cursor:not-allowed; }
+.league-status {
+  font-family:'JetBrains Mono',monospace; font-size:.62rem;
+  margin-bottom:1rem; padding:.4rem .7rem; border-radius:6px; display:none;
+}
+.league-status.show  { display:block; }
+.league-status.ok    { color:var(--green); background:rgba(16,232,160,.06); border:1px solid rgba(16,232,160,.15); }
+.league-status.err   { color:var(--red);   background:rgba(240,69,90,.06);  border:1px solid rgba(240,69,90,.15); }
+.league-status.loading { color:var(--blue); background:rgba(77,166,255,.06); border:1px solid rgba(77,166,255,.15); }
+
+/* DEDUCTIONS SECTION */
+.ded-section { margin-bottom:1.5rem; }
+.ded-rows { display:flex; flex-direction:column; gap:.5rem; margin-bottom:.6rem; }
+.ded-row { display:grid; grid-template-columns:1fr 90px 36px; gap:.5rem; align-items:center; }
+.add-ded-btn {
+  width:100%; padding:.5rem; border-radius:8px;
+  border:1px dashed var(--border); background:transparent; color:var(--text3);
+  font-family:'JetBrains Mono',monospace; font-size:.68rem; cursor:pointer; letter-spacing:.08em;
+}
+.add-ded-btn:hover { border-color:var(--red); color:var(--red); }
+
+/* SHAME NOTE now dynamic */
+.shame-note { display:none; }
+.shame-note.show { display:block; }
+
 @keyframes fadeUp{from{opacity:0;transform:translateY(14px);}to{opacity:1;transform:translateY(0);}}
 @keyframes slideIn{to{opacity:1;transform:translateX(0);}}
 </style>
@@ -484,6 +520,16 @@ select{cursor:pointer;}
 
   <div class="setup">
     <div class="setup-title">Configuration</div>
+
+    <!-- LEAGUE ID -->
+    <div class="field-lbl" style="margin-bottom:.4rem">League ID</div>
+    <div class="league-id-row">
+      <div class="league-id-field">
+        <input type="number" id="league-id" placeholder="e.g. 123456" min="1" style="margin:0">
+      </div>
+      <button id="fetch-league-btn" onclick="fetchLeague()">LOAD LEAGUE</button>
+    </div>
+    <div class="league-status" id="league-status"></div>
 
     <div class="gw-row">
       <div class="gw-field">
@@ -504,6 +550,10 @@ select{cursor:pointer;}
           <option value="37">GW 37</option><option value="38">GW 38</option>
         </select>
         <div id="gw-league-played" style="font-family:'JetBrains Mono',monospace;font-size:.58rem;color:var(--text3);margin-top:.3rem;"></div>
+      </div>
+      <div class="gw-field">
+        <div class="field-lbl">League Start GW <span style="color:var(--text3);font-size:.56rem;">(auto-detected)</span></div>
+        <div class="gw-derived" id="league-start-display">1</div>
       </div>
       <div class="gw-field">
         <div class="field-lbl">League GWs Remaining</div>
@@ -559,6 +609,12 @@ select{cursor:pointer;}
       </div>
     </div>
 
+    <div class="ded-section">
+      <div class="field-lbl" style="margin-bottom:.5rem">Point Deductions <span style="color:var(--text3);font-size:.56rem;">(optional — for house rules, penalties etc)</span></div>
+      <div class="ded-rows" id="ded-rows"></div>
+      <button class="add-ded-btn" onclick="addDeduction()">+ Add Deduction</button>
+    </div>
+
     <div class="teams-hdr">
       <div>Team Name</div><div>Manager</div><div>Points</div><div></div>
     </div>
@@ -607,18 +663,18 @@ select{cursor:pointer;}
   </div>
 
 <div class="shame-note" id="shame-note">
-    <b>POINT DEDUCTIONS:</b><br><br>
-    Omar Alkhaffaf (Bayern Bru) — <b>-82 pts</b> for cheating.<br>
-    Zoraiz Khan (Afghani FC) — <b>-100 pts</b> for not completing their forfeit on time.<br>
-    Abu Ilyas (AuraFarmer_67) — <b>-100 pts</b> for not completing their forfeit on time.<br><br>
-    All displayed points reflect these permanent deductions.
+    <b>POINT DEDUCTIONS IN EFFECT:</b><br>
+    <div id="shame-note-body"></div>
   </div>
 
 </div>
 
 <script>
 // ── CONSTANTS ─────────────────────────────────────────────────────────────
-var PRED_MODE = 'blended'; // 'season' | 'blended' | 'form'
+var PRED_MODE    = 'blended'; // 'season' | 'blended' | 'form'
+var LEAGUE_ID   = '';   // set by user input
+var LEAGUE_START = 1;  // auto-detected from FPL API (league.start_event)
+var deductionCount = 0; // counter for deduction row IDs
 var teamHistory = {}; // stores full GW history per team name
 var teamChips   = {}; // stores chips_remaining per team name
 var SERVER    = 'https://fpl-server-5vy4.onrender.com';
@@ -628,41 +684,140 @@ var currentTab = 'win';
 var simResults = null;
 var teamCount  = 0;
 
-// ── DEFAULT TEAMS (alphabetical, points blank) ────────────────────────────
-var DEFAULT_TEAMS = [
-  { name: 'abaseen fc',         manager: 'Ali Nasir',      pts: '' },
-  { name: 'Afghani FC',         manager: 'Zoraiz Khan',    pts: '' },
-  { name: 'AuraFarmer_67',      manager: 'Abu Ilyas',      pts: '' },
-  { name: 'Bayern Bru',         manager: 'Omar Alkhaffaf', pts: '' },
-  { name: 'Bhutta FC',          manager: 'Ehsan Bhutta',   pts: '' },
-  { name: 'Haramball FC',       manager: 'Suleiman Omar',  pts: '' },
-  { name: 'yoro wizard, harry', manager: 'Yahya Arshad',   pts: '' },
-];
+// No default teams — user loads their league via ID
 
 // ── HELPERS ───────────────────────────────────────────────────────────────
 function escHtml(s){
   return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;');
 }
 
+function getDeductions() {
+  // Reads user-configured deductions from the UI
+  var deds = [];
+  document.querySelectorAll('.ded-row').forEach(function(row){
+    var name = row.querySelector('.d-name').value.trim().toLowerCase();
+    var pts  = parseInt(row.querySelector('.d-pts').value);
+    if(name && !isNaN(pts) && pts > 0) deds.push({ name:name, pts:pts });
+  });
+  return deds;
+}
+
 function applyDeductions(teams) {
-  teams.forEach(function(t) {
-    if (t.name && t.name.toLowerCase().indexOf('bayern bru') !== -1) {
-      if (t.pts !== '' && !isNaN(parseInt(t.pts))) {
-        t.pts = Math.max(0, parseInt(t.pts) - 82);
+  var deds = getDeductions();
+  if(deds.length === 0) return teams;
+  teams.forEach(function(t){
+    var tname = (t.name || '').toLowerCase();
+    deds.forEach(function(d){
+      if(tname.indexOf(d.name) !== -1 && !isNaN(parseInt(t.pts))){
+        t.pts = Math.max(0, parseInt(t.pts) - d.pts);
       }
-    }
-    if (t.name && t.name.toLowerCase().indexOf('aurafarmer') !== -1) {
-      if (t.pts !== '' && !isNaN(parseInt(t.pts))) {
-        t.pts = Math.max(0, parseInt(t.pts) - 100);
-      }
-    }
-    if (t.name && t.name.toLowerCase().indexOf('afghani fc') !== -1) {
-      if (t.pts !== '' && !isNaN(parseInt(t.pts))) {
-        t.pts = Math.max(0, parseInt(t.pts) - 100);
-      }
-    }
+    });
   });
   return teams;
+}
+
+function updateShameNote() {
+  var deds = getDeductions();
+  var note = document.getElementById('shame-note');
+  var body = document.getElementById('shame-note-body');
+  if(deds.length === 0){ note.classList.remove('show'); return; }
+  var html = '<br>';
+  deds.forEach(function(d){
+    var label = document.querySelector('.ded-row .d-name[value]');
+    // Find the row with this name to get the reason
+    document.querySelectorAll('.ded-row').forEach(function(row){
+      if(row.querySelector('.d-name').value.trim().toLowerCase() === d.name){
+        var reason = row.querySelector('.d-reason') ? row.querySelector('.d-reason').value : '';
+        html += escHtml(row.querySelector('.d-name').value.trim()) +
+          ' — <b>-' + d.pts + ' pts</b>' +
+          (reason ? ' (' + escHtml(reason) + ')' : '') + '<br>';
+      }
+    });
+  });
+  html += '<br>All displayed points reflect these deductions.';
+  body.innerHTML = html;
+  note.classList.add('show');
+}
+
+
+// ── LEAGUE ID + DEDUCTIONS ────────────────────────────────────────────────
+function fetchLeague() {
+  var idInput = document.getElementById('league-id');
+  var lid     = idInput.value.trim();
+  var status  = document.getElementById('league-status');
+  var btn     = document.getElementById('fetch-league-btn');
+
+  if(!lid || isNaN(parseInt(lid))){
+    status.className  = 'league-status show err';
+    status.textContent = 'Please enter a valid League ID number.';
+    return;
+  }
+
+  LEAGUE_ID = parseInt(lid);
+  btn.disabled = true;
+  status.className  = 'league-status show loading';
+  status.textContent = 'Loading league...';
+
+  fetchWithTimeout(SERVER + '/standings?league_id=' + LEAGUE_ID, 60000)
+    .then(function(r){ if(!r.ok) throw new Error('Server error '+r.status); return r.json(); })
+    .then(function(data){
+      if(!data.teams || data.teams.length === 0) throw new Error('No teams found');
+
+      // Auto-detect league start GW from API
+      if(data.league_start){
+        LEAGUE_START = data.league_start;
+        updateGWRemaining();
+      }
+
+      var teams = data.teams;
+      applyDeductions(teams);
+      teams.forEach(function(t){
+        var key = t.name.toLowerCase().trim();
+        if(t.history && t.history.length > 0) teamHistory[key] = t.history;
+        if(t.chips_remaining) teamChips[key] = t.chips_remaining;
+      });
+
+      document.getElementById('team-rows').innerHTML = '';
+      teamCount = 0;
+      addTeam.silent = true;
+      teams.forEach(function(t){ addTeam(t.name, t.manager, t.pts); });
+      addTeam.silent = false;
+
+      status.className  = 'league-status show ok';
+      status.textContent = 'League loaded: ' + (data.league_name || LEAGUE_ID) + ' — ' + teams.length + ' teams';
+      btn.disabled = false;
+      saveState();
+      autoDetectGW();
+    })
+    .catch(function(err){
+      status.className  = 'league-status show err';
+      status.textContent = err.message === 'timeout'
+        ? 'Server took too long. Try again.'
+        : 'Could not load league. Check the ID and try again.';
+      btn.disabled = false;
+    });
+}
+
+var deductionCount = 0;
+function addDeduction(name, pts, reason) {
+  name   = name   || '';
+  pts    = pts    || '';
+  reason = reason || '';
+  var id  = deductionCount++;
+  var row = document.createElement('div');
+  row.className  = 'ded-row';
+  row.dataset.id = id;
+  row.innerHTML  =
+    '<input type="text"   class="d-name"   placeholder="Team name (partial ok)" value="'+escHtml(name)+'" oninput="updateShameNote()">' +
+    '<input type="number" class="d-pts"    placeholder="Pts" min="1"            value="'+escHtml(String(pts))+'" oninput="updateShameNote()">' +
+    '<button class="rm-btn" onclick="removeDed('+id+')">x</button>';
+  document.getElementById('ded-rows').appendChild(row);
+  saveState();
+}
+
+function removeDed(id) {
+  var row = document.querySelector('.ded-row[data-id="'+id+'"]');
+  if(row){ row.remove(); updateShameNote(); saveState(); }
 }
 
 // ── GW ────────────────────────────────────────────────────────────────────
@@ -673,6 +828,7 @@ function updateGWRemaining() {
   var leagueGWsPlayed    = Math.max(0, gw - LEAGUE_START + 1);
   var leagueGWsRemaining = Math.max(0, 38 - gw);
   document.getElementById('gws-remaining-display').textContent = leagueGWsRemaining;
+  document.getElementById('league-start-display').textContent  = 'GW ' + LEAGUE_START;
   var badge = document.getElementById('gw-league-played');
   if(badge) badge.textContent = leagueGWsPlayed + ' league GW' + (leagueGWsPlayed !== 1 ? 's' : '') + ' played';
 }
@@ -1194,7 +1350,7 @@ function fetchLiveData(){
   status.className='fetch-status show loading';
   status.textContent='Fetching live data...';
   wakeTimer=setTimeout(function(){status.textContent='Waking up server, please wait... (up to 30 seconds)';},3000);
-  fetchWithTimeout(SERVER+'/standings',60000)
+  fetchWithTimeout(SERVER+'/standings'+(LEAGUE_ID?'?league_id='+LEAGUE_ID:''),60000)
     .then(function(r){
       clearTimeout(wakeTimer);
       if(!r.ok)throw new Error('Server error '+r.status);
@@ -1224,7 +1380,7 @@ function fetchLiveData(){
       if(err.message==='timeout'){
         status.textContent='Server took too long. Tap Fetch Live Data to try again.';
       } else {
-        status.textContent='Could not reach server. Check your internet connection.';
+        status.textContent='Could not reach server. Check your internet connection and that you have a valid League ID.';
       }
       btn.disabled=false;
     });
@@ -1238,9 +1394,22 @@ function saveState(){
     rows.forEach(function(row){
       teams.push({name:row.querySelector('.t-name').value,manager:row.querySelector('.t-manager').value,pts:row.querySelector('.t-pts').value});
     });
+    // Save deductions
+    var deds = [];
+    document.querySelectorAll('.ded-row').forEach(function(row){
+      deds.push({
+        name:   row.querySelector('.d-name').value,
+        pts:    row.querySelector('.d-pts').value,
+      });
+    });
     localStorage.setItem(STATE_KEY,JSON.stringify({
-      gwsPlayed:document.getElementById('gws-played').value,
-      sims:SIMS,predMode:PRED_MODE,teams:teams,bayernDeducted:true
+      gwsPlayed:   document.getElementById('gws-played').value,
+      leagueId:    LEAGUE_ID,
+      leagueStart: LEAGUE_START,
+      sims:        SIMS,
+      predMode:    PRED_MODE,
+      teams:       teams,
+      deductions:  deds,
     }));
   }catch(e){}
 }
@@ -1281,11 +1450,25 @@ document.addEventListener('input',function(e){
 });
 
 // ── KEEP SERVER ALIVE (pings every 9 min to prevent Render sleeping) ──────
-setInterval(function(){fetch(SERVER+'/standings').catch(function(){});}, 9*60*1000);
+setInterval(function(){fetch(SERVER+'/currentgw').catch(function(){});}, 9*60*1000);
 
 // ── AUTO-FETCH ON PAGE LOAD ───────────────────────────────────────────────
 
 function applyStatePrefs(state){
+  if(state.leagueId){
+    LEAGUE_ID = state.leagueId;
+    var lidEl = document.getElementById('league-id');
+    if(lidEl) lidEl.value = LEAGUE_ID;
+  }
+  if(state.leagueStart){
+    LEAGUE_START = state.leagueStart;
+  }
+  if(state.deductions && state.deductions.length > 0){
+    document.getElementById('ded-rows').innerHTML = '';
+    deductionCount = 0;
+    state.deductions.forEach(function(d){ addDeduction(d.name, d.pts, d.reason); });
+    updateShameNote();
+  }
   if(state.gwsPlayed){
     var gwVal2 = parseInt(state.gwsPlayed);
     var sel = document.getElementById('gws-played');
@@ -1329,6 +1512,8 @@ function restorePreferences(){
 
 updateGWRemaining();
 
+// ── STARTUP SEQUENCE ──────────────────────────────────────────────────────
+// Try to restore saved state first. If a league ID is saved, auto-fetch it.
 (function startup(){
   var status = document.getElementById('fetch-status');
   var btn    = document.getElementById('fetch-btn');
@@ -1341,7 +1526,7 @@ updateGWRemaining();
     status.textContent = 'Waking up server, please wait... (up to 30 seconds)';
   }, 3000);
 
-  fetchWithTimeout(SERVER + '/standings', 60000)
+  fetchWithTimeout(SERVER + '/standings' + (LEAGUE_ID ? '?league_id='+LEAGUE_ID : ''), 60000)
     .then(function(r){ if(!r.ok) throw new Error('error'); return r.json(); })
     .then(function(teams){
       // ── SUCCESS: live data from Render ──────────────────────────────
