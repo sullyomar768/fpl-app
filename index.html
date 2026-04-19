@@ -491,6 +491,28 @@ select{cursor:pointer;}
 .league-status.err   { color:var(--red);   background:rgba(240,69,90,.06);  border:1px solid rgba(240,69,90,.15); }
 .league-status.loading { color:var(--blue); background:rgba(77,166,255,.06); border:1px solid rgba(77,166,255,.15); }
 
+
+.ded-autocomplete { position: relative; }
+.ded-suggestions {
+  position:absolute; top:100%; left:0; right:0;
+  background:var(--card);
+  border:1px solid var(--border);
+  border-top:none;
+  z-index:50;
+  max-height:150px;
+  overflow-y:auto;
+  border-radius:0 0 8px 8px;
+}
+.ded-suggestion-item {
+  padding:.5rem .6rem;
+  cursor:pointer;
+  font-family:'JetBrains Mono', monospace;
+  font-size:.7rem;
+}
+.ded-suggestion-item:hover {
+  background:rgba(16,232,160,.08);
+}
+
 /* DEDUCTIONS SECTION */
 .ded-section { margin-bottom:1.5rem; }
 .ded-rows { display:flex; flex-direction:column; gap:.5rem; margin-bottom:.6rem; }
@@ -683,8 +705,31 @@ var SIMS      = 100000;
 var currentTab = 'win';
 var simResults = null;
 var teamCount  = 0;
+var TEAM_NAMES = [];
 
 // No default teams — user loads their league via ID
+
+
+function handleDedInput(input){
+  var value = input.value.toLowerCase();
+  var box = input.parentElement.querySelector('.ded-suggestions');
+  box.innerHTML = '';
+  if(!value) return;
+  var matches = TEAM_NAMES.filter(function(name){
+    return name.toLowerCase().includes(value);
+  }).slice(0,5);
+  matches.forEach(function(name){
+    var item = document.createElement('div');
+    item.className = 'ded-suggestion-item';
+    item.textContent = name;
+    item.onclick = function(){
+      input.value = name;
+      box.innerHTML = '';
+      updateShameNote();
+    };
+    box.appendChild(item);
+  });
+}
 
 // ── HELPERS ───────────────────────────────────────────────────────────────
 function escHtml(s){
@@ -780,7 +825,8 @@ function fetchLeague() {
       document.getElementById('team-rows').innerHTML = '';
       teamCount = 0;
       addTeam.silent = true;
-      teams.forEach(function(t){ addTeam(t.name, t.manager, t.pts); });
+      TEAM_NAMES = teams.map(function(t){ return t.name; });
+teams.forEach(function(t){ addTeam(t.name, t.manager, t.pts); });
       addTeam.silent = false;
 
       status.className  = 'league-status show ok';
@@ -808,7 +854,7 @@ function addDeduction(name, pts, reason) {
   row.className  = 'ded-row';
   row.dataset.id = id;
   row.innerHTML  =
-    '<input type="text"   class="d-name"   placeholder="Team name (partial ok)" value="'+escHtml(name)+'" oninput="updateShameNote()">' +
+    '<div class="ded-autocomplete">' +'<input type="text" class="d-name" placeholder="Team name" value="'+escHtml(name)+'" oninput="handleDedInput(this)">' +'<div class="ded-suggestions"></div>' +'</div>' +
     '<input type="number" class="d-pts"    placeholder="Pts" min="1"            value="'+escHtml(String(pts))+'" oninput="updateShameNote()">' +
     '<button class="rm-btn" onclick="removeDed('+id+')">x</button>';
   document.getElementById('ded-rows').appendChild(row);
@@ -1432,7 +1478,8 @@ function loadState(){
       document.getElementById('team-rows').innerHTML = '';
       teamCount = 0;
       addTeam.silent = true;
-      state.teams.forEach(function(t){ addTeam(t.name, t.manager, t.pts); });
+      state.TEAM_NAMES = teams.map(function(t){ return t.name; });
+teams.forEach(function(t){ addTeam(t.name, t.manager, t.pts); });
       addTeam.silent = false;
       return true;
     }
@@ -1546,7 +1593,8 @@ updateGWRemaining();
       document.getElementById('team-rows').innerHTML = '';
       teamCount = 0;
       addTeam.silent = true;
-      teams.forEach(function(t){ addTeam(t.name, t.manager, t.pts); });
+      TEAM_NAMES = teams.map(function(t){ return t.name; });
+teams.forEach(function(t){ addTeam(t.name, t.manager, t.pts); });
       addTeam.silent = false;
 
       // Restore non-team preferences (sim count, form window, gw) from localStorage
